@@ -13,6 +13,7 @@ from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 
 import requests
+from requests import HTTPError, RequestException
 
 SEC_FEED_URL = (
     "https://www.sec.gov/cgi-bin/browse-edgar?"
@@ -154,8 +155,20 @@ def gather_purchases() -> List[InsiderPurchase]:
     for entry in entries:
         try:
             index_html = fetch_text(entry["link"])
+        except HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            logging.warning("HTTP error fetching filing index %s (status %s): %s", entry["link"], status, exc)
+            continue
+        except RequestException as exc:  # noqa: PERF203
+            logging.warning("Network error fetching filing index %s: %s", entry["link"], exc)
+            continue
         except Exception as exc:  # noqa: BLE001
-            logging.warning("Skipping %s due to index fetch error: %s", entry["link"], exc)
+            logging.warning(
+                "Skipping %s due to unexpected index fetch error (%s): %s",
+                entry["link"],
+                type(exc).__name__,
+                exc,
+            )
             continue
 
         xml_href = find_xml_document_href(index_html)
@@ -169,8 +182,15 @@ def gather_purchases() -> List[InsiderPurchase]:
         try:
             xml_text = fetch_text(xml_url)
             purchases = parse_purchase_transactions(xml_text)
+        except HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            logging.warning("HTTP error fetching ownership XML %s (status %s): %s", xml_url, status, exc)
+            continue
+        except ET.ParseError as exc:
+            logging.warning("XML parse error for %s: %s", xml_url, exc)
+            continue
         except Exception as exc:  # noqa: BLE001
-            logging.warning("Failed to parse filing %s: %s", xml_url, exc)
+            logging.warning("Failed to parse filing %s (%s): %s", xml_url, type(exc).__name__, exc)
             continue
 
         for purchase in purchases:
@@ -232,7 +252,11 @@ def main() -> None:
     try:
         purchases = gather_purchases()
     except Exception as exc:  # noqa: BLE001
-        logging.error("Failed to gather insider purchases: %s", exc)
+        logging.error(
+            "Failed to gather insider purchases (%s). Check network connectivity or SEC feed format changes. Details: %s",
+            type(exc).__name__,
+            exc,
+        )
         raise SystemExit(1)
 
     write_markdown(purchases)

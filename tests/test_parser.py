@@ -58,6 +58,72 @@ class ParsePurchaseTransactionsTests(unittest.TestCase):
         self.assertEqual(purchase.price, Decimal("30"))
         self.assertEqual(purchase.value, Decimal("60000"))
 
+    def test_purchase_equal_to_threshold_is_included(self) -> None:
+        sample_xml = textwrap.dedent(
+            """
+            <ownershipDocument>
+              <issuer>
+                <issuerName>Edge Corp</issuerName>
+                <issuerTradingSymbol>EDGE</issuerTradingSymbol>
+              </issuer>
+              <reportingOwner>
+                <reportingOwnerId>
+                  <rptOwnerName>John Smith</rptOwnerName>
+                </reportingOwnerId>
+              </reportingOwner>
+              <nonDerivativeTable>
+                <nonDerivativeTransaction>
+                  <transactionDate><value>2024-03-05</value></transactionDate>
+                  <transactionCoding>
+                    <transactionCode>P</transactionCode>
+                  </transactionCoding>
+                  <transactionAmounts>
+                    <transactionShares><value>1000</value></transactionShares>
+                    <transactionPricePerShare><value>50</value></transactionPricePerShare>
+                  </transactionAmounts>
+                </nonDerivativeTransaction>
+              </nonDerivativeTable>
+            </ownershipDocument>
+            """
+        )
+
+        purchases = parse_purchase_transactions(sample_xml, minimum_value=Decimal("50000"))
+
+        self.assertEqual(len(purchases), 1)
+        self.assertEqual(purchases[0].value, Decimal("50000"))
+
+    def test_missing_price_or_shares_are_skipped(self) -> None:
+        sample_xml = textwrap.dedent(
+            """
+            <ownershipDocument>
+              <issuer>
+                <issuerName>Missing Data Corp</issuerName>
+                <issuerTradingSymbol>MDC</issuerTradingSymbol>
+              </issuer>
+              <reportingOwner>
+                <reportingOwnerId>
+                  <rptOwnerName>Alice Example</rptOwnerName>
+                </reportingOwnerId>
+              </reportingOwner>
+              <nonDerivativeTable>
+                <nonDerivativeTransaction>
+                  <transactionDate><value>2024-03-10</value></transactionDate>
+                  <transactionCoding>
+                    <transactionCode>P</transactionCode>
+                  </transactionCoding>
+                  <transactionAmounts>
+                    <transactionShares><value>1000</value></transactionShares>
+                  </transactionAmounts>
+                </nonDerivativeTransaction>
+              </nonDerivativeTable>
+            </ownershipDocument>
+            """
+        )
+
+        purchases = parse_purchase_transactions(sample_xml, minimum_value=Decimal("50000"))
+
+        self.assertEqual(purchases, [])
+
 
 if __name__ == "__main__":
     unittest.main()
