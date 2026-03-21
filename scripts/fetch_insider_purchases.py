@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -21,9 +22,10 @@ SEC_FEED_URL = (
 )
 USER_AGENT = os.environ.get(
     "SEC_USER_AGENT",
-    "FollowTheMoneyBot/1.0 (https://github.com/gautam00010/Follow-The-Money)",
+    "Gautam Jha mgstudiooo0@gmail.com",
 )
 OUTPUT_FILE = Path(__file__).resolve().parent.parent / "daily_report.md"
+CSV_FILE = Path(__file__).resolve().parent.parent / "historical_insider_buys.csv"
 MINIMUM_VALUE = Decimal(os.environ.get("INSIDER_PURCHASE_THRESHOLD", "50000"))
 FEED_COUNT = int(os.environ.get("INSIDER_FEED_COUNT", "100"))
 REQUEST_TIMEOUT = 30
@@ -211,11 +213,15 @@ def format_number(value: Decimal) -> str:
 
 def write_markdown(purchases: List[InsiderPurchase]) -> None:
     now = datetime.now(timezone.utc)
+    summary_text = generate_statistical_summary(purchases) # Generate the summary
     lines = [
         "# Daily Insider Purchases (>$50,000)",
         f"Last updated: {now:%Y-%m-%d %H:%M UTC}",
         f"Data source: SEC Form 4 current filings (latest {FEED_COUNT})",
         "",
+        summary_text, # Add it to the markdown
+        "",
+        "### 🚨 Latest Transactions (>$50k)",
     ]
 
     if not purchases:
@@ -246,6 +252,49 @@ def write_markdown(purchases: List[InsiderPurchase]) -> None:
 
     OUTPUT_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+def update_historical_csv(new_purchases: List[InsiderPurchase]) -> None:
+    """Appends new purchases to the CSV database without creating duplicates."""
+    existing_records = set()
+    
+    # Load existing signatures to avoid duplicates
+    if CSV_FILE.exists() and os.path.getsize(CSV_FILE) > 0:
+        with open(CSV_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader, None) # Skip header
+            for row in reader:
+                if len(row) >= 7:
+                    # Create a unique signature: Date + Ticker + Insider + Value
+                    existing_records.add((row[0], row[2], row[3], row[6]))
+
+    # Append new records
+    is_new_file = not CSV_FILE.exists() or os.path.getsize(CSV_FILE) == 0
+    with open(CSV_FILE, 'a', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f)
+        if is_new_file:
+            writer.writerow(["Date", "Company", "Ticker", "Insider", "Shares", "Price", "Value", "Filing URL"])
+
+        for p in new_purchases:
+            signature = (p.date or "N/A", p.ticker, p.insider, format_decimal(p.value))
+            if signature not in existing_records:
+                writer.writerow([
+                    p.date or "N/A", p.issuer_name, p.ticker,
+                    p.insider, str(p.shares), str(p.price),
+                    format_decimal(p.value), p.filing_url
+                ])
+
+def generate_statistical_summary(purchases: List[InsiderPurchase]) -> str:
+    """Generates a quantitative summary of the day's insider activity."""
+    if not purchases:
+        return "> *No massive insider buys detected in the current feed.*"
+    
+    total_value = sum(p.value for p in purchases)
+    largest_buy = max(purchases, key=lambda p: p.value)
+    
+    return (
+        f"### 📊 Daily Market Pulse\n"
+        f"> - **Total Capital Injected:** {format_decimal(total_value)} across {len(purchases)} high-conviction transactions.\n"
+        f"> - **Largest Single Move:** {largest_buy.insider} bought **{format_decimal(largest_buy.value)}** of {largest_buy.issuer_name} ({largest_buy.ticker}).\n"
+    )
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -259,6 +308,7 @@ def main() -> None:
         )
         raise SystemExit(1)
 
+    update_historical_csv(purchases)
     write_markdown(purchases)
     logging.info("Wrote %s", OUTPUT_FILE)
 
