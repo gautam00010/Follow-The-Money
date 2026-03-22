@@ -28,8 +28,7 @@ jobs:
       - name: Fetch insider purchases
         run: python scripts/fetch_insider_purchases.py
         env:
-          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || 'FollowTheMoneyBot/1.0 (https://github.com/gautam00010/Follow-The-Money)' }}
-
+          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
       - name: Commit updated report
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
