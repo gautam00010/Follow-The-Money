@@ -1,0 +1,55 @@
+name: AlphaWeave MVP
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 6" # Weekly at 00:00 UTC on Saturday
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+      ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+      ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run data ingestion
+        run: |
+          python ingestion/fetch_data.py
+
+      - name: Build fused signals
+        run: |
+          python signals/fuse_signals.py
+
+      - name: Compile backtest engine
+        working-directory: backtest_engine
+        run: |
+          make
+
+      - name: Execute backtest
+        run: |
+          ./backtest_engine/engine
+
+      - name: Commit updated datasets and report
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update AlphaWeave data and report"
+          file_pattern: |
+            data/raw/*.csv
+            data/processed/*.csv
+            REPORT.md
