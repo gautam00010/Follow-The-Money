@@ -61,19 +61,16 @@ def to_decimal(raw: Optional[str]) -> Optional[Decimal]:
 
 
 def fetch_text(url: str) -> str:
-    # 1. Bulletproof Headers (Replace with your actual email!)
-    headers = {
-        "User-Agent": "Gautam Jha your_actual_email@gmail.com", 
-        "Accept-Encoding": "gzip, deflate",
-        "Host": "www.sec.gov"
-    }
+    api_key = os.environ.get("SCRAPERAPI_KEY")
     
-    # 2. The Speed Bump: Force the script to pause for 0.2 seconds
-    # This guarantees you never exceed the SEC limit of 10 requests/second
-    time.sleep(0.2)
-    
-    logging.debug("Fetching %s", url)
-    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    # If the key exists, route the request through the residential proxy
+    if api_key:
+        target_url = f"http://api.scraperapi.com?api_key={api_key}&url={url}"
+    else:
+        target_url = url
+        
+    # Proxies can take a few extra seconds to route the traffic
+    response = requests.get(target_url, timeout=60)
     response.raise_for_status()
     return response.text
 
@@ -162,10 +159,27 @@ def parse_purchase_transactions(xml_text: str, minimum_value: Decimal = MINIMUM_
 def gather_purchases() -> List[InsiderPurchase]:
     feed_xml = fetch_text(SEC_FEED_URL.format(count=FEED_COUNT))
     entries = parse_feed_entries(feed_xml)
-    logging.info("Found %d recent Form 4 filings in feed", len(entries))
+    
+    # --- THE MEMORY BANK ---
+    seen_file = Path(__file__).resolve().parent.parent / "seen_filings.txt"
+    seen_links = set()
+    if seen_file.exists():
+        seen_links = set(seen_file.read_text(encoding="utf-8").splitlines())
+
+    # Filter out filings we have already checked
+    new_entries = [e for e in entries if e["link"] not in seen_links]
+    
+    # STRICT BUDGET: Only process 15 new filings per day to stay under 1,000/month limit
+    daily_budget = 15
+    new_entries = new_entries[:daily_budget]
+    logging.info("Found %d total filings. Processing %d new filings today to save proxy quota.", len(entries), len(new_entries))
 
     all_purchases: List[InsiderPurchase] = []
-    for entry in entries:
+    
+    for entry in new_entries:
+        # 1. Add the link to our memory bank immediately so we never check it again
+        seen_links.add(entry["link"])
+        
         try:
             index_html = fetch_text(entry["link"])
         except HTTPError as exc:
@@ -209,6 +223,9 @@ def gather_purchases() -> List[InsiderPurchase]:
         for purchase in purchases:
             purchase.filing_url = entry["link"]
         all_purchases.extend(purchases)
+
+    # 2. Save the updated memory bank back to the file before finishing
+    seen_file.write_text("\n".join(seen_links), encoding="utf-8")
 
     return sorted(all_purchases, key=lambda p: p.value, reverse=True)
 
