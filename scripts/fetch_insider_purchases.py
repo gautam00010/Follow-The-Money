@@ -6,6 +6,7 @@ import os
 import re
 import csv
 import time
+import urllib.parse 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -63,13 +64,18 @@ def to_decimal(raw: Optional[str]) -> Optional[Decimal]:
 def fetch_text(url: str) -> str:
     api_key = os.environ.get("SCRAPERAPI_KEY")
     
-    # If the key exists, route the request through the residential proxy
-    if api_key:
-        target_url = f"http://api.scraperapi.com?api_key={api_key}&url={url}"
-    else:
-        target_url = url
+    # Fail-safe: If the script can't see the key, stop immediately instead of getting blocked
+    if not api_key:
+        raise ValueError("CRITICAL ERROR: The SCRAPERAPI_KEY is missing from the environment variables!")
         
-    # Proxies can take a few extra seconds to route the traffic
+    # We must 'quote' the SEC URL so the proxy reads the '&' symbols correctly
+    encoded_url = urllib.parse.quote(url)
+    
+    # Route through the residential proxy
+    target_url = f"http://api.scraperapi.com?api_key={api_key}&url={encoded_url}"
+    
+    logging.debug("Routing request through proxy...")
+    # Give the proxy a long timeout (60s) because bouncing around the world takes a moment
     response = requests.get(target_url, timeout=60)
     response.raise_for_status()
     return response.text
