@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import csv
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -60,7 +61,17 @@ def to_decimal(raw: Optional[str]) -> Optional[Decimal]:
 
 
 def fetch_text(url: str) -> str:
-    headers = {"User-Agent": USER_AGENT}
+    # 1. Bulletproof Headers (Replace with your actual email!)
+    headers = {
+        "User-Agent": "Gautam Jha your_actual_email@gmail.com", 
+        "Accept-Encoding": "gzip, deflate",
+        "Host": "www.sec.gov"
+    }
+    
+    # 2. The Speed Bump: Force the script to pause for 0.2 seconds
+    # This guarantees you never exceed the SEC limit of 10 requests/second
+    time.sleep(0.2)
+    
     logging.debug("Fetching %s", url)
     response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
