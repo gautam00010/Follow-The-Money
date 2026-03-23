@@ -1,85 +1,67 @@
-from __future__ import annotations
-
-from pathlib import Path
+import os
+import sys
 import pandas as pd
 
-def _read_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Required input not found: {path}")
-    # We remove parse_dates here because we will handle it strictly in the main function
-    return pd.read_csv(path)
+# Define directories
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW_DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
+PROCESSED_DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
 
-def _rolling_zscore(
-    series: pd.Series,
-    window: int,
-    min_periods: int = 5,
-    rolling_mean: pd.Series | None = None,
-) -> pd.Series:
-    mean_series = (
-        rolling_mean if rolling_mean is not None else series.rolling(window, min_periods=min_periods).mean()
-    )
+def ensure_directory():
+    if not os.path.exists(PROCESSED_DATA_DIR):
+        os.makedirs(PROCESSED_DATA_DIR)
+
+def _rolling_zscore(series, window, min_periods=5):
+    mean_series = series.rolling(window, min_periods=min_periods).mean()
     std_series = series.rolling(window, min_periods=min_periods).std()
-    safe_std = std_series.replace(0, pd.NA)
+    safe_std = std_series.replace(0, 1) # Prevent divide by zero
     zscore = (series - mean_series) / safe_std
     return zscore.fillna(0.0)
 
-def build_signals(
-    equity_path: Path | str = Path("data/raw/equity_prices.csv"),
-    jobs_path: Path | str = Path("data/raw/job_postings.csv"),
-    output_path: Path | str = Path("data/processed/signals.csv"),
-    ma_window: int = 30,
-    zscore_window: int = 30,
-) -> Path:
-    """
-    Merge equity and labor data to produce a trading signal file.
+def build_signals():
+    equity_path = os.path.join(RAW_DATA_DIR, "equity_prices.csv")
+    jobs_path = os.path.join(RAW_DATA_DIR, "job_postings.csv")
 
-    The z-score flags statistically significant hiring spikes that often
-    precede growth regimes in technology equities.
-    """
-    equity_df = _read_csv(Path(equity_path))
-    jobs_df = _read_csv(Path(jobs_path))
+    print("Loading raw data...")
+    equity_df = pd.read_csv(equity_path)
+    jobs_df = pd.read_csv(jobs_path)
 
-    # --- THE QUANT FIX: Align dates and Forward-Fill ---
-    # 1. Force both date columns to be strict datetime objects
-    equity_df['date'] = pd.to_datetime(equity_df['date'], format='mixed', errors='coerce')
-    jobs_df['date'] = pd.to_datetime(jobs_df['date'], format='mixed', errors='coerce')
+    # Convert to proper datetime
+    equity_df['date'] = pd.to_datetime(equity_df['date'])
+    jobs_df['date'] = pd.to_datetime(jobs_df['date'])
 
-    # 2. Sort before merging
-    equity_df = equity_df.sort_values("date")
-    jobs_df = jobs_df.sort_values("date")
-
-    # 3. LEFT merge to keep all trading days, then forward-fill the monthly job data
-    merged = pd.merge(equity_df, jobs_df, on="date", how="left")
+    # THE MASTER QUANT FIX: Calendar Alignment
+    # 1. Outer merge keeps BOTH trading days and the 1st of the month
+    merged = pd.merge(equity_df, jobs_df, on="date", how="outer")
+    
+    # 2. Sort chronologically
+    merged = merged.sort_values("date")
+    
+    # 3. Forward-fill the job postings to fill the gaps between the 1st of each month
     merged["job_postings"] = merged["job_postings"].ffill()
     
-    # Drop rows before the job data starts
+    # 4. Now remove weekends/holidays by dropping rows where the stock market was closed
+    merged = merged.dropna(subset=["close"])
+    
+    # 5. Drop the beginning of the timeline where we didn't have job data yet
     merged = merged.dropna(subset=["job_postings"])
-    # ---------------------------------------------------
 
     if merged.empty:
-        raise ValueError("Merged dataset is empty; check source overlaps.")
+        raise ValueError("Merged dataset is empty after alignment. Check date ranges.")
 
-    job_ma = merged["job_postings"].rolling(ma_window, min_periods=5).mean()
-    merged[f"job_ma_{ma_window}d"] = job_ma
-    
-    rolling_mean_for_zscore = job_ma if ma_window == zscore_window else None
-    
-    merged["job_zscore"] = _rolling_zscore(
-        merged["job_postings"],
-        window=zscore_window,
-        min_periods=5,
-        rolling_mean=rolling_mean_for_zscore,
-    )
+    print("Calculating quantitative signals...")
+    merged["job_zscore"] = _rolling_zscore(merged["job_postings"], window=30, min_periods=5)
 
-    # Clean up output to only what the C++ engine needs
     final_df = merged[['date', 'close', 'job_zscore']]
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    final_df.to_csv(output_path, index=False)
-    
-    return output_path
+    out_path = os.path.join(PROCESSED_DATA_DIR, "signals.csv")
+    final_df.to_csv(out_path, index=False)
+    print(f"SUCCESS: Signal file created with {len(final_df)} days of trading data at {out_path}")
 
 if __name__ == "__main__":
-    output = build_signals()
-    print(f"Wrote fused signals to {output}")
+    try:
+        ensure_directory()
+        build_signals()
+    except Exception as e:
+        print(f"SIGNAL FUSION ERROR: {str(e)}", file=sys.stderr)
+        sys.exit(1)
