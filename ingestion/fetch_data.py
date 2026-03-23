@@ -24,7 +24,7 @@ def fetch_equity_data():
         raise ValueError("CRITICAL: FMP_API_KEY is missing from GitHub Secrets.")
     
     print("Fetching historical equity data from FMP Stable API...")
-    url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=XLK&apikey={FMP_API_KEY}"
+    url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=MSFT&apikey={FMP_API_KEY}"
     
     response = requests.get(url, timeout=30)
     
