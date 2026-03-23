@@ -4,7 +4,7 @@ import sys
 import requests
 import pandas as pd
 
-# 1. Securely load API keys from GitHub Actions Environment
+# 1. Securely load API keys
 FMP_API_KEY = os.environ.get("FMP_API_KEY")
 ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
@@ -19,16 +19,17 @@ def ensure_directory():
         os.makedirs(RAW_DATA_DIR)
 
 def fetch_equity_data():
-    """Fetches historical XLK ETF data from FMP and saves it to CSV."""
+    """Fetches historical AAPL data from FMP and saves it to CSV."""
     if not FMP_API_KEY:
         raise ValueError("CRITICAL: FMP_API_KEY is missing from GitHub Secrets.")
     
-    print("Fetching historical equity data from FMP Stable API...")
-    url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=MSFT&apikey={FMP_API_KEY}"
+    print("Fetching historical equity data for AAPL from FMP Stable API...")
+    
+    # EXACT FIX: The symbol here is hardcoded to AAPL (Free Tier)
+    url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey={FMP_API_KEY}"
     
     response = requests.get(url, timeout=30)
     
-    # FAIL LOUDLY if the API blocks us
     if response.status_code != 200:
         raise RuntimeError(f"FMP API failed with status {response.status_code}: {response.text}")
     
@@ -53,7 +54,6 @@ def fetch_job_postings():
         raise ValueError("CRITICAL: ADZUNA API keys are missing from GitHub Secrets.")
         
     print("Fetching alternative labor data from Adzuna...")
-    # Using the Adzuna 'histogram' endpoint to get time-series data for Machine Learning jobs
     url = f"https://api.adzuna.com/v1/api/jobs/us/histogram?app_id={ADZUNA_APP_ID}&app_key={ADZUNA_APP_KEY}&what=machine%20learning"
     
     response = requests.get(url, timeout=30)
@@ -66,8 +66,6 @@ def fetch_job_postings():
     if 'histogram' not in data:
         raise ValueError("Adzuna API response is missing the 'histogram' key.")
         
-    # Adzuna returns {"histogram": {"2026-01": 1500, "2026-02": 1600}}
-    # Convert this to a DataFrame with standard YYYY-MM-DD dates
     records = [{"date": f"{month}-01", "job_postings": count} for month, count in data["histogram"].items()]
     df = pd.DataFrame(records)
     
@@ -86,11 +84,8 @@ if __name__ == "__main__":
         fetch_job_postings()
         print("Data Ingestion Step Complete.")
     except Exception as e:
-        # This guarantees GitHub Actions will crash and turn red immediately if anything goes wrong
         print(f"PIPELINE CRITICAL ERROR: {str(e)}", file=sys.stderr)
-        sys.exit(1)
-
-    payload = response.json()
+        sys.exit(1)nse.json()
     historical_data = payload
     if not historical_data:
         raise DataIngestionError(("Off"))
