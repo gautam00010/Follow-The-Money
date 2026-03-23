@@ -1,4 +1,3 @@
-from __future__ import annotations
 import os
 import sys
 import requests
@@ -25,7 +24,6 @@ def fetch_equity_data():
     
     print("Fetching historical equity data for AAPL from FMP Stable API...")
     
-    # EXACT FIX: The symbol here is hardcoded to AAPL (Free Tier)
     url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey={FMP_API_KEY}"
     
     response = requests.get(url, timeout=30)
@@ -85,7 +83,4 @@ if __name__ == "__main__":
         print("Data Ingestion Step Complete.")
     except Exception as e:
         print(f"PIPELINE CRITICAL ERROR: {str(e)}", file=sys.stderr)
-        sys.exit(1)nse.json()
-    historical_data = payload
-    if not historical_data:
-        raise DataIngestionError(("Off"))
+        sys.exit(1)
