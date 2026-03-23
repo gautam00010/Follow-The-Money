@@ -23,8 +23,6 @@ def fetch_equity_data():
         raise ValueError("CRITICAL: FMP_API_KEY is missing from GitHub Secrets.")
     
     print("Fetching historical equity data for AAPL from FMP Stable API...")
-    
-    # Using AAPL to bypass the premium ETF restriction
     url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey={FMP_API_KEY}"
     
     response = requests.get(url, timeout=30)
@@ -48,12 +46,13 @@ def fetch_equity_data():
     return csv_path
 
 def fetch_job_postings():
-    """Fetches alternative labor market data from Adzuna and saves it to CSV."""
+    """Fetches historical salary trends for ML jobs as our alternative data signal."""
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         raise ValueError("CRITICAL: ADZUNA API keys are missing from GitHub Secrets.")
         
-    print("Fetching alternative labor data from Adzuna...")
-    url = f"https://api.adzuna.com/v1/api/jobs/us/histogram?app_id={ADZUNA_APP_ID}&app_key={ADZUNA_APP_KEY}&what=machine%20learning"
+    print("Fetching alternative labor data (Salary History) from Adzuna...")
+    # THE FIX: Switch to the 'history' endpoint to get real YYYY-MM dates
+    url = f"https://api.adzuna.com/v1/api/jobs/us/history?app_id={ADZUNA_APP_ID}&app_key={ADZUNA_APP_KEY}&what=machine%20learning"
     
     response = requests.get(url, timeout=30)
     
@@ -62,10 +61,12 @@ def fetch_job_postings():
         
     data = response.json()
     
-    if 'histogram' not in data:
-        raise ValueError("Adzuna API response is missing the 'histogram' key.")
+    if 'month' not in data:
+        raise ValueError("Adzuna API response is missing the 'month' key.")
         
-    records = [{"date": f"{month}-01", "job_postings": count} for month, count in data["histogram"].items()]
+    # data["month"] looks like {"2025-10": 145000, "2025-11": 146000}
+    # We map the salary values into the 'job_postings' column so the C++ engine doesn't break
+    records = [{"date": f"{month_str}-01", "job_postings": value} for month_str, value in data["month"].items()]
     df = pd.DataFrame(records)
     
     if df.empty:
