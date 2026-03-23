@@ -113,7 +113,7 @@ int main() {
     }
 
     // --- GENERATE INSTITUTIONAL REPORT ---
-    ofstream report("../REPORT.md");
+    ofstream report("REPORT.md");
     report << "# AlphaWeave Quantitative Strategy Report\n\n";
     report << "## Backtest Results\n";
     report << "* **Total Trading Days Simulated:** " << history.size() << "\n";
