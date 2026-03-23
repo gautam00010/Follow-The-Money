@@ -19,7 +19,8 @@ struct DailyData {
 int main() {
     cout << "Initializing AlphaWeave Quantitative Backtester..." << endl;
 
-    string input_path = "../data/processed/signals.csv";
+    string input_path = "data/processed/signals.csv"; 
+    string report_path = "REPORT.md";
     ifstream file(input_path);
     if (!file.is_open()) {
         cerr << "CRITICAL ERROR: Cannot open " << input_path << ". Did the Python fusion step run?" << endl;
