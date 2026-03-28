@@ -12,6 +12,8 @@ ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
 TECH_UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"]
+PRICE_FIELDS = ["date", "close", "volume"]
+OUTPUT_COLUMNS = ["date", "symbol", "close", "volume"]
 
 def ensure_directory():
     """Create the data/raw/ directory if it doesn't exist."""
@@ -29,10 +31,11 @@ def fetch_equity_data():
 
     for symbol in TECH_UNIVERSE:
         print(f"Fetching historical equity data for {symbol} from FMP Stable API...")
-        url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol={symbol}&apikey={FMP_API_KEY}"
+        url = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+        params = {"symbol": symbol, "apikey": FMP_API_KEY}
 
         try:
-            response = requests.get(url, timeout=30)
+            response = requests.get(url, params=params, timeout=30)
 
             if response.status_code != 200:
                 raise RuntimeError(f"FMP API failed with status {response.status_code}: {response.text}")
@@ -46,10 +49,10 @@ def fetch_equity_data():
 
             df = pd.DataFrame(data)
 
-            if "date" not in df.columns or "close" not in df.columns or "volume" not in df.columns:
-                raise KeyError(f"FMP data for {symbol} is missing 'date', 'close', or 'volume' columns.")
+            if not set(PRICE_FIELDS).issubset(df.columns):
+                raise KeyError(f"FMP data for {symbol} is missing one of {PRICE_FIELDS} columns.")
 
-            subset = df[["date", "close", "volume"]].assign(symbol=symbol)
+            subset = df[PRICE_FIELDS].assign(symbol=symbol)
             all_frames.append(subset)
 
         except Exception as e:
@@ -75,7 +78,7 @@ def fetch_equity_data():
     combined = combined.sort_values(by=["date", "symbol"])
     # Serialize to ISO 8601 strings for a stable, tidy CSV artifact
     combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
-    combined = combined[["date", "symbol", "close", "volume"]]
+    combined = combined[OUTPUT_COLUMNS]
 
     csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
     combined.to_csv(csv_path, index=False)
