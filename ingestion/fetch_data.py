@@ -65,7 +65,8 @@ def fetch_equity_data():
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
     combined = combined.dropna(subset=["date"])
     combined = combined.sort_values(by=["date", "symbol"])
-    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")  # consistent, sortable string output
+    # Keep datetime for sorting, then serialize to ISO strings for a stable, tidy CSV artifact
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
     combined = combined[["date", "symbol", "close", "volume"]]
 
     csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
@@ -81,7 +82,8 @@ def fetch_job_postings():
     """Fetches historical salary trends for ML jobs as our alternative data signal."""
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         raise ValueError("CRITICAL: ADZUNA API keys are missing from GitHub Secrets.")
-        
+
+    ensure_directory()
     print("Fetching alternative labor data (Salary History) from Adzuna...")
     # THE FIX: Switch to the 'history' endpoint to get real YYYY-MM dates
     url = f"https://api.adzuna.com/v1/api/jobs/us/history?app_id={ADZUNA_APP_ID}&app_key={ADZUNA_APP_KEY}&what=machine%20learning"
