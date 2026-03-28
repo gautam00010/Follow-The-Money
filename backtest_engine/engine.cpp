@@ -20,7 +20,7 @@ struct PerformanceSummary {
     string ticker;
     double cumulative_return;
     double sharpe_ratio;
-    double max_drawdown;
+    double max_drawdown_pct;
     string recommendation;
 };
 
@@ -54,7 +54,7 @@ void write_report(const vector<PerformanceSummary>& summaries,
                << row.ticker << " | "
                << row.cumulative_return << "% | "
                << row.sharpe_ratio << " | "
-               << row.max_drawdown * 100.0 << "% | "
+               << row.max_drawdown_pct << "% | "
                << row.recommendation << " |\n";
     }
     report << "\n## Signal Methodology\n";
@@ -171,7 +171,7 @@ int main() {
             "UNIVERSE",
             cumulative_return,
             sharpe_ratio,
-            max_drawdown,
+            max_drawdown * 100.0,
             determine_recommendation(sharpe_ratio, cumulative_return)
         };
         summaries.push_back(row);

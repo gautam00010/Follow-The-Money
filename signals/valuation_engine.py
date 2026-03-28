@@ -70,7 +70,7 @@ class ValuationAnalyst:
                     raise ValueError(f"Missing metrics for {symbol}: {latest}")
                 records.append(record)
             except Exception as exc:
-                print(f"WARNING: Failed to fetch metrics for {symbol}: {exc}", file=sys.stderr)
+                print(f"WARNING: Failed to fetch metrics for {symbol} ({type(exc).__name__}): {exc}", file=sys.stderr)
                 continue
         if not records:
             raise RuntimeError("No key metrics could be fetched for the universe.")
