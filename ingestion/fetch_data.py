@@ -65,15 +65,15 @@ def fetch_equity_data():
     invalid_mask = combined["parsed_date"].isna()
     if invalid_mask.any():
         dropped_rows = invalid_mask.sum()
-        bad_symbols = ", ".join(sorted(combined.loc[invalid_mask, "symbol"].unique()))
+        symbols_with_invalid_dates = ", ".join(sorted(combined.loc[invalid_mask, "symbol"].unique()))
         print(
-            f"WARNING: Dropped {dropped_rows} rows with invalid dates during parsing. Affected symbols: {bad_symbols}.",
+            f"WARNING: Dropped {dropped_rows} rows with invalid dates during parsing. Affected symbols: {symbols_with_invalid_dates}.",
             file=sys.stderr,
         )
     combined = combined[~invalid_mask].copy()
     combined["date"] = combined["parsed_date"].dt.strftime("%Y-%m-%d")
     combined = combined.drop(columns=["parsed_date"])
-    # Serialize to ISO strings for a stable, tidy CSV artifact and sort
+    # Serialize to ISO 8601 strings for a stable, tidy CSV artifact and sort
     combined = combined.sort_values(by=["date", "symbol"])
     combined = combined[["date", "symbol", "close", "volume"]]
 
