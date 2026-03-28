@@ -61,8 +61,8 @@ def fetch_equity_data():
         raise RuntimeError("FMP API fetch failed for all symbols; no data to save.")
 
     combined = pd.concat(all_frames, ignore_index=True)
-    combined["parsed_date"] = pd.to_datetime(combined["date"], errors="coerce")
-    invalid_mask = combined["parsed_date"].isna()
+    combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    invalid_mask = combined["date"].isna()
     if invalid_mask.any():
         dropped_rows = invalid_mask.sum()
         symbols_with_invalid_dates = ", ".join(sorted(combined.loc[invalid_mask, "symbol"].unique()))
@@ -71,10 +71,9 @@ def fetch_equity_data():
             file=sys.stderr,
         )
     combined = combined[~invalid_mask].copy()
-    combined["date"] = combined["parsed_date"].dt.strftime("%Y-%m-%d")
-    combined = combined.drop(columns=["parsed_date"])
-    # Serialize to ISO 8601 strings for a stable, tidy CSV artifact and sort
     combined = combined.sort_values(by=["date", "symbol"])
+    # Serialize to ISO 8601 strings for a stable, tidy CSV artifact
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
     combined = combined[["date", "symbol", "close", "volume"]]
 
     csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
