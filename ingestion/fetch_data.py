@@ -75,6 +75,8 @@ def fetch_equity_data():
             file=sys.stderr,
         )
     combined = combined[~invalid_mask].copy()
+    if combined.empty:
+        raise ValueError("All fetched rows contained invalid dates; nothing to save.")
     combined = combined.sort_values(by=["date", "symbol"])
     # Serialize to ISO 8601 strings for a stable, tidy CSV artifact
     combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
