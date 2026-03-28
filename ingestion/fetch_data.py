@@ -11,6 +11,9 @@ ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
 # 2. Define exactly where the CSVs must be saved
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
+TECH_UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"]
+PRICE_FIELDS = ["date", "close", "volume"]
+OUTPUT_COLUMNS = ["date", "symbol", "close", "volume"]
 
 def ensure_directory():
     """Create the data/raw/ directory if it doesn't exist."""
@@ -18,38 +21,83 @@ def ensure_directory():
         os.makedirs(RAW_DATA_DIR)
 
 def fetch_equity_data():
-    """Fetches historical AAPL data from FMP and saves it to CSV."""
+    """Fetches historical data for the tech universe from FMP and saves it to CSV."""
     if not FMP_API_KEY:
         raise ValueError("CRITICAL: FMP_API_KEY is missing from GitHub Secrets.")
-    
-    print("Fetching historical equity data for AAPL from FMP Stable API...")
-    url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey={FMP_API_KEY}"
-    
-    response = requests.get(url, timeout=30)
-    
-    if response.status_code != 200:
-        raise RuntimeError(f"FMP API failed with status {response.status_code}: {response.text}")
-    
-    data = response.json()
-    
-    if not data or not isinstance(data, list):
-        raise ValueError(f"FMP API returned unexpected structure. Expected a flat list, got: {str(data)[:100]}")
-        
-    df = pd.DataFrame(data)
-    
-    if 'date' not in df.columns or 'close' not in df.columns:
-        raise KeyError("FMP data is missing 'date' or 'close' columns.")
-        
-    csv_path = os.path.join(RAW_DATA_DIR, "equity_prices.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"SUCCESS: Saved {len(df)} rows to {csv_path}")
+
+    ensure_directory()
+    all_frames = []
+    failed_symbols = []
+
+    for symbol in TECH_UNIVERSE:
+        print(f"Fetching historical equity data for {symbol} from FMP Stable API...")
+        url = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+        params = {"symbol": symbol, "apikey": FMP_API_KEY}
+
+        try:
+            response = requests.get(url, params=params, timeout=30)
+
+            if response.status_code != 200:
+                raise RuntimeError(f"FMP API failed with status {response.status_code}: {response.text}")
+
+            data = response.json()
+
+            if not data or not isinstance(data, list):
+                raise ValueError(
+                    f"FMP API returned unexpected structure for {symbol}. Expected a flat list, got: {str(data)[:100]}"
+                )
+
+            df = pd.DataFrame(data)
+
+            if not set(PRICE_FIELDS).issubset(df.columns):
+                raise KeyError(f"FMP data for {symbol} is missing one of {PRICE_FIELDS} columns.")
+
+            subset = df[PRICE_FIELDS].assign(symbol=symbol)
+            all_frames.append(subset)
+
+        except Exception as e:
+            failed_symbols.append(symbol)
+            print(f"WARNING: Failed to fetch data for {symbol}: {str(e)}", file=sys.stderr)
+            continue
+
+    if not all_frames:
+        raise RuntimeError("FMP API fetch failed for all symbols; no data to save.")
+
+    combined = pd.concat(all_frames, ignore_index=True)
+    combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    invalid_mask = combined["date"].isna()
+    if invalid_mask.any():
+        invalid_rows = combined[invalid_mask]
+        dropped_rows = len(invalid_rows)
+        symbols_with_invalid_dates = ", ".join(sorted(invalid_rows["symbol"].unique()))
+        print(
+            f"WARNING: Dropped {dropped_rows} rows with invalid dates during parsing. Affected symbols: {symbols_with_invalid_dates}.",
+            file=sys.stderr,
+        )
+    combined = combined[~invalid_mask].copy()
+    if combined.empty:
+        raise ValueError("All fetched rows contained invalid dates; nothing to save.")
+    combined = combined.sort_values(by=["date", "symbol"])
+    # Serialize to ISO 8601 strings for a stable, tidy CSV artifact
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
+    combined = combined[OUTPUT_COLUMNS]
+
+    csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
+    combined.to_csv(csv_path, index=False)
+    success_count = len(TECH_UNIVERSE) - len(failed_symbols)
+    print(f"SUCCESS: Saved {len(combined)} rows to {csv_path} from {success_count} tickers")
+
+    if failed_symbols:
+        print(f"Completed with warnings. Failed tickers: {', '.join(failed_symbols)}", file=sys.stderr)
+
     return csv_path
 
 def fetch_job_postings():
     """Fetches historical salary trends for ML jobs as our alternative data signal."""
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         raise ValueError("CRITICAL: ADZUNA API keys are missing from GitHub Secrets.")
-        
+
+    ensure_directory()
     print("Fetching alternative labor data (Salary History) from Adzuna...")
     # THE FIX: Switch to the 'history' endpoint to get real YYYY-MM dates
     url = f"https://api.adzuna.com/v1/api/jobs/us/history?app_id={ADZUNA_APP_ID}&app_key={ADZUNA_APP_KEY}&what=machine%20learning"
@@ -79,7 +127,6 @@ def fetch_job_postings():
 
 if __name__ == "__main__":
     try:
-        ensure_directory()
         fetch_equity_data()
         fetch_job_postings()
         print("Data Ingestion Step Complete.")
