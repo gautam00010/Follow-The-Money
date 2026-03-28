@@ -9,6 +9,8 @@
 #include <map>
 #include <unordered_map>
 #include <numeric>
+#include <filesystem>
+#include <cstdlib>
 
 using namespace std;
 
@@ -73,7 +75,11 @@ void write_report(const vector<PerformanceSummary>& summaries,
     report.close();
 }
 
-BacktestResult run_backtest(const string& ticker, const vector<PricePoint>& history) {
+// Run a single-ticker backtest using salary z-score thresholds:
+// - Enter long when signal > 2.0, exit to cash when signal < -1.0
+// - Track equity from a $100k starting balance with no leverage
+// - Return cumulative return, Sharpe, max drawdown, benchmark, and dated returns
+BacktestResult run_ticker_backtest(const string& ticker, const vector<PricePoint>& history) {
     if (history.size() < 2) {
         throw runtime_error("INSUFFICIENT DATA: Not enough price history for " + ticker);
     }
@@ -145,15 +151,48 @@ int main() {
     cout << "Initializing AlphaWeave Quantitative Backtester..." << endl;
 
     try {
-        string signal_path = "../data/processed/signals.csv";
-        string price_path = "../data/raw/universe_prices.csv";
-        string report_path = "../REPORT.md";
+        const char* env_signal = getenv("SIGNALS_CSV_PATH");
+        const char* env_prices = getenv("UNIVERSE_PRICES_PATH");
+        const char* env_report = getenv("REPORT_PATH");
+
+        auto find_repo_root = []() {
+            filesystem::path probe = filesystem::current_path();
+            for (int i = 0; i < 5 && !probe.empty(); ++i) {
+                if (filesystem::exists(probe / "data") || filesystem::exists(probe / ".git")) {
+                    return probe;
+                }
+                probe = probe.parent_path();
+            }
+            return filesystem::current_path();
+        };
+
+        filesystem::path base_dir = find_repo_root();
+
+        string signal_path = env_signal ? string(env_signal) : (base_dir / "data/processed/signals.csv").string();
+        string price_path = env_prices ? string(env_prices) : (base_dir / "data/raw/universe_prices.csv").string();
+        string report_path = env_report ? string(env_report) : (base_dir / "REPORT.md").string();
+
+        auto validate_path = [](const string& path, const string& label, const string& env_var) {
+            if (path.empty()) {
+                throw runtime_error("CRITICAL ERROR: " + label + " path is empty. Set " + env_var + " or run from the repo root.");
+            }
+            if (!filesystem::exists(path)) {
+                throw runtime_error("CRITICAL ERROR: " + label + " not found at " + path);
+            }
+        };
+
+        validate_path(signal_path, "Signals CSV", "SIGNALS_CSV_PATH");
+        validate_path(price_path, "Universe prices CSV", "UNIVERSE_PRICES_PATH");
+        filesystem::path report_parent = filesystem::path(report_path).parent_path();
+        if (!report_parent.empty() && !filesystem::exists(report_parent)) {
+            filesystem::create_directories(report_parent);
+        }
         ifstream signal_file(signal_path);
         if (!signal_file.is_open()) {
             throw runtime_error("CRITICAL ERROR: Cannot open " + signal_path + ". Did the Python fusion step run?");
         }
 
-        unordered_map<string, double> job_zscores;
+        unordered_map<string, double> salary_zscores;
         string line, word;
 
         getline(signal_file, line);
@@ -162,9 +201,9 @@ int main() {
             string date;
             getline(s, date, ','); // date
             getline(s, word, ','); // close (ignored)
-            getline(s, word, ','); // job_zscore
+            getline(s, word, ','); // salary_zscore
             if (!date.empty() && !word.empty()) {
-                job_zscores[date] = stod(word);
+                salary_zscores[date] = stod(word);
             }
         }
         signal_file.close();
@@ -177,8 +216,6 @@ int main() {
         map<string, vector<PricePoint>> price_history_by_symbol;
 
         getline(price_file, line); // header
-        size_t total_unique_days = 0;
-        unordered_map<string, bool> seen_dates;
         while (getline(price_file, line)) {
             stringstream s(line);
             string date, symbol, close_str;
@@ -195,17 +232,12 @@ int main() {
             }
 
             double signal_value = 0.0;
-            auto it = job_zscores.find(date);
-            if (it != job_zscores.end()) {
+            auto it = salary_zscores.find(date);
+            if (it != salary_zscores.end()) {
                 signal_value = it->second;
             }
 
             price_history_by_symbol[symbol].push_back({date, close, signal_value});
-
-            if (!seen_dates.count(date)) {
-                seen_dates[date] = true;
-                ++total_unique_days;
-            }
         }
         price_file.close();
 
@@ -216,8 +248,7 @@ int main() {
         vector<PerformanceSummary> summaries;
         map<string, vector<double>> aggregate_returns;
         double total_starting_equity = 0.0;
-        const double STARTING_EQUITY_PER_TICKER = 100000.0;
-
+        size_t max_history_length = 0;
         for (auto& kv : price_history_by_symbol) {
             auto& history = kv.second;
             sort(history.begin(), history.end(), [](const PricePoint& a, const PricePoint& b) {
@@ -229,9 +260,10 @@ int main() {
                 continue;
             }
 
-            BacktestResult result = run_backtest(kv.first, history);
+            BacktestResult result = run_ticker_backtest(kv.first, history);
             summaries.push_back(result.summary);
             total_starting_equity += result.starting_equity;
+            max_history_length = max(max_history_length, history.size());
 
             for (const auto& dr : result.dated_returns) {
                 aggregate_returns[dr.first].push_back(dr.second);
@@ -242,23 +274,18 @@ int main() {
             throw runtime_error("CRITICAL ERROR: No valid ticker histories to backtest.");
         }
 
-        vector<pair<string, double>> averaged_returns;
-        for (const auto& kv : aggregate_returns) {
-            double avg_return = accumulate(kv.second.begin(), kv.second.end(), 0.0) / kv.second.size();
-            averaged_returns.push_back({kv.first, avg_return});
-        }
-        sort(averaged_returns.begin(), averaged_returns.end(), [](const auto& a, const auto& b) {
-            return a.first < b.first;
-        });
-
         vector<double> total_daily_returns;
         double aggregate_equity = total_starting_equity;
         double aggregate_peak = total_starting_equity;
         double aggregate_max_drawdown = 0.0;
 
-        for (const auto& ar : averaged_returns) {
-            aggregate_equity *= (1.0 + ar.second);
-            total_daily_returns.push_back(ar.second);
+        // Aggregate assumes equal weighting by taking the mean return of all tickers that report data on each date.
+        // Dates where some tickers are missing simply average over the available names; this intentionally avoids
+        // forward-filling or overweighting tickers with longer histories but can introduce survivorship bias.
+        for (const auto& kv : aggregate_returns) {
+            double avg_return = accumulate(kv.second.begin(), kv.second.end(), 0.0) / kv.second.size();
+            aggregate_equity *= (1.0 + avg_return);
+            total_daily_returns.push_back(avg_return);
             if (aggregate_equity > aggregate_peak) {
                 aggregate_peak = aggregate_equity;
             }
@@ -285,8 +312,11 @@ int main() {
         double total_cumulative_return = ((aggregate_equity - total_starting_equity) / total_starting_equity) * 100.0;
 
         double benchmark_equity = 0.0;
+        size_t ticker_count = summaries.size();
+        double capital_per_ticker = total_starting_equity / static_cast<double>(ticker_count);
+        // Equal-weight the buy-and-hold benchmark across the same tickers to mirror the strategy aggregation.
         for (const auto& row : summaries) {
-            benchmark_equity += STARTING_EQUITY_PER_TICKER * (1.0 + row.benchmark_return / 100.0);
+            benchmark_equity += capital_per_ticker * (1.0 + row.benchmark_return / 100.0);
         }
         double total_benchmark_return = ((benchmark_equity - total_starting_equity) / total_starting_equity) * 100.0;
 
@@ -301,7 +331,7 @@ int main() {
 
         summaries.push_back(total_row);
 
-        write_report(summaries, total_unique_days, total_starting_equity, aggregate_equity, report_path);
+        write_report(summaries, max_history_length, total_starting_equity, aggregate_equity, report_path);
 
         cout << "SUCCESS: Backtest complete. Risk metrics saved to " << report_path << endl;
         return 0;
