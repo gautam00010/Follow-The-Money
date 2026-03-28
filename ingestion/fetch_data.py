@@ -61,20 +61,26 @@ def fetch_equity_data():
         raise RuntimeError("FMP API fetch failed for all symbols; no data to save.")
 
     combined = pd.concat(all_frames, ignore_index=True)
-    combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
-    before_drop = len(combined)
-    combined = combined.dropna(subset=["date"])
-    dropped = before_drop - len(combined)
-    if dropped:
-        print(f"WARNING: Dropped {dropped} rows with invalid dates during parsing.", file=sys.stderr)
+    combined["parsed_date"] = pd.to_datetime(combined["date"], errors="coerce")
+    invalid_mask = combined["parsed_date"].isna()
+    if invalid_mask.any():
+        dropped_rows = invalid_mask.sum()
+        bad_symbols = ", ".join(sorted(combined.loc[invalid_mask, "symbol"].unique()))
+        print(
+            f"WARNING: Dropped {dropped_rows} rows with invalid dates during parsing. Affected symbols: {bad_symbols}.",
+            file=sys.stderr,
+        )
+    combined = combined[~invalid_mask].copy()
+    combined["date"] = combined["parsed_date"].dt.strftime("%Y-%m-%d")
+    combined = combined.drop(columns=["parsed_date"])
     # Serialize to ISO strings for a stable, tidy CSV artifact and sort
-    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
     combined = combined.sort_values(by=["date", "symbol"])
     combined = combined[["date", "symbol", "close", "volume"]]
 
     csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
     combined.to_csv(csv_path, index=False)
-    print(f"SUCCESS: Saved {len(combined)} rows to {csv_path} from {len(all_frames)} tickers")
+    success_count = len(TECH_UNIVERSE) - len(failed_symbols)
+    print(f"SUCCESS: Saved {len(combined)} rows to {csv_path} from {success_count} tickers")
 
     if failed_symbols:
         print(f"Completed with warnings. Failed tickers: {', '.join(failed_symbols)}", file=sys.stderr)
