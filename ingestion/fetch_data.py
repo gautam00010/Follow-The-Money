@@ -11,6 +11,7 @@ ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
 # 2. Define exactly where the CSVs must be saved
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
+TECH_UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN"]
 
 def ensure_directory():
     """Create the data/raw/ directory if it doesn't exist."""
@@ -18,31 +19,62 @@ def ensure_directory():
         os.makedirs(RAW_DATA_DIR)
 
 def fetch_equity_data():
-    """Fetches historical AAPL data from FMP and saves it to CSV."""
+    """Fetches historical data for the tech universe from FMP and saves it to CSV."""
     if not FMP_API_KEY:
         raise ValueError("CRITICAL: FMP_API_KEY is missing from GitHub Secrets.")
-    
-    print("Fetching historical equity data for AAPL from FMP Stable API...")
-    url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey={FMP_API_KEY}"
-    
-    response = requests.get(url, timeout=30)
-    
-    if response.status_code != 200:
-        raise RuntimeError(f"FMP API failed with status {response.status_code}: {response.text}")
-    
-    data = response.json()
-    
-    if not data or not isinstance(data, list):
-        raise ValueError(f"FMP API returned unexpected structure. Expected a flat list, got: {str(data)[:100]}")
-        
-    df = pd.DataFrame(data)
-    
-    if 'date' not in df.columns or 'close' not in df.columns:
-        raise KeyError("FMP data is missing 'date' or 'close' columns.")
-        
-    csv_path = os.path.join(RAW_DATA_DIR, "equity_prices.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"SUCCESS: Saved {len(df)} rows to {csv_path}")
+
+    ensure_directory()
+    all_frames = []
+    failed_symbols = []
+
+    for symbol in TECH_UNIVERSE:
+        print(f"Fetching historical equity data for {symbol} from FMP Stable API...")
+        url = f"https://financialmodelingprep.com/stable/historical-price-eod/full?symbol={symbol}&apikey={FMP_API_KEY}"
+
+        try:
+            response = requests.get(url, timeout=30)
+
+            if response.status_code != 200:
+                raise RuntimeError(f"FMP API failed with status {response.status_code}: {response.text}")
+
+            data = response.json()
+
+            if not data or not isinstance(data, list):
+                raise ValueError(
+                    f"FMP API returned unexpected structure for {symbol}. Expected a flat list, got: {str(data)[:100]}"
+                )
+
+            df = pd.DataFrame(data)
+
+            if "date" not in df.columns or "close" not in df.columns or "volume" not in df.columns:
+                raise KeyError(f"FMP data for {symbol} is missing 'date', 'close', or 'volume' columns.")
+
+            subset = df[["date", "close", "volume"]].copy()
+            subset["symbol"] = symbol
+            all_frames.append(subset)
+
+        except Exception as e:
+            failed_symbols.append(symbol)
+            print(f"WARNING: Failed to fetch data for {symbol}: {str(e)}", file=sys.stderr)
+            continue
+
+    if not all_frames:
+        raise RuntimeError("FMP API fetch failed for all symbols; no data to save.")
+
+    combined = pd.concat(all_frames, ignore_index=True)
+    combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    combined = combined.dropna(subset=["date"])
+    combined = combined.sort_values(by=["date", "symbol"])
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
+    combined = combined[["date", "symbol", "close", "volume"]]
+
+    csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
+    combined.to_csv(csv_path, index=False)
+    print(f"SUCCESS: Saved {len(combined)} rows to {csv_path}")
+
+    if failed_symbols:
+        print(f"Completed with warnings. Failed tickers: {', '.join(failed_symbols)}", file=sys.stderr)
+
     return csv_path
 
 def fetch_job_postings():
