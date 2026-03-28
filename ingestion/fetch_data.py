@@ -18,13 +18,12 @@ def ensure_directory():
     if not os.path.exists(RAW_DATA_DIR):
         os.makedirs(RAW_DATA_DIR)
 
-ensure_directory()
-
 def fetch_equity_data():
     """Fetches historical data for the tech universe from FMP and saves it to CSV."""
     if not FMP_API_KEY:
         raise ValueError("CRITICAL: FMP_API_KEY is missing from GitHub Secrets.")
 
+    ensure_directory()
     all_frames = []
     failed_symbols = []
 
@@ -63,10 +62,14 @@ def fetch_equity_data():
 
     combined = pd.concat(all_frames, ignore_index=True)
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    before_drop = len(combined)
     combined = combined.dropna(subset=["date"])
-    combined = combined.sort_values(by=["date", "symbol"])
-    # Keep datetime for sorting, then serialize to ISO strings for a stable, tidy CSV artifact
+    dropped = before_drop - len(combined)
+    if dropped:
+        print(f"WARNING: Dropped {dropped} rows with invalid dates during parsing.", file=sys.stderr)
+    # Serialize to ISO strings for a stable, tidy CSV artifact and sort
     combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
+    combined = combined.sort_values(by=["date", "symbol"])
     combined = combined[["date", "symbol", "close", "volume"]]
 
     csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
@@ -83,6 +86,7 @@ def fetch_job_postings():
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         raise ValueError("CRITICAL: ADZUNA API keys are missing from GitHub Secrets.")
 
+    ensure_directory()
     print("Fetching alternative labor data (Salary History) from Adzuna...")
     # THE FIX: Switch to the 'history' endpoint to get real YYYY-MM dates
     url = f"https://api.adzuna.com/v1/api/jobs/us/history?app_id={ADZUNA_APP_ID}&app_key={ADZUNA_APP_KEY}&what=machine%20learning"
