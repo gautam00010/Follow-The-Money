@@ -64,8 +64,9 @@ def fetch_equity_data():
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
     invalid_mask = combined["date"].isna()
     if invalid_mask.any():
-        dropped_rows = invalid_mask.sum()
-        symbols_with_invalid_dates = ", ".join(sorted(combined.loc[invalid_mask, "symbol"].unique()))
+        invalid_rows = combined[invalid_mask]
+        dropped_rows = len(invalid_rows)
+        symbols_with_invalid_dates = ", ".join(sorted(invalid_rows["symbol"].unique()))
         print(
             f"WARNING: Dropped {dropped_rows} rows with invalid dates during parsing. Affected symbols: {symbols_with_invalid_dates}.",
             file=sys.stderr,
