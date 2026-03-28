@@ -65,12 +65,12 @@ def fetch_equity_data():
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
     combined = combined.dropna(subset=["date"])
     combined = combined.sort_values(by=["date", "symbol"])
-    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")
+    combined["date"] = combined["date"].dt.strftime("%Y-%m-%d")  # consistent, sortable string output
     combined = combined[["date", "symbol", "close", "volume"]]
 
     csv_path = os.path.join(RAW_DATA_DIR, "universe_prices.csv")
     combined.to_csv(csv_path, index=False)
-    print(f"SUCCESS: Saved {len(combined)} rows to {csv_path}")
+    print(f"SUCCESS: Saved {len(combined)} rows to {csv_path} from {len(all_frames)} tickers")
 
     if failed_symbols:
         print(f"Completed with warnings. Failed tickers: {', '.join(failed_symbols)}", file=sys.stderr)
