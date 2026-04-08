@@ -76,6 +76,10 @@ void write_report(const vector<PerformanceSummary>& summaries,
     report.close();
 }
 
+// Run a single-ticker backtest using salary z-score thresholds:
+// - Enter long when signal > 2.0, exit to cash when signal < -1.0
+// - Track equity from a $100k starting balance with no leverage
+// - Return cumulative return, Sharpe, max drawdown, benchmark, and dated returns
 BacktestResult run_ticker_backtest(const string& ticker, const vector<PricePoint>& history) {
     if (history.size() < 2) {
         throw runtime_error("INSUFFICIENT DATA: Not enough price history for " + ticker);
@@ -85,7 +89,7 @@ BacktestResult run_ticker_backtest(const string& ticker, const vector<PricePoint
     const double EXIT_THRESHOLD = -1.0;
     const double STARTING_EQUITY = 100000.0;
 
-    double current_position = 0.0; 
+    double current_position = 0.0; // 0.0 = Cash, 1.0 = Invested
     double current_equity = STARTING_EQUITY;
     double peak_equity = STARTING_EQUITY;
     double max_drawdown = 0.0;
@@ -110,9 +114,9 @@ BacktestResult run_ticker_backtest(const string& ticker, const vector<PricePoint
         }
 
         if (history[i].signal > ENTRY_THRESHOLD) {
-            current_position = 1.0; 
+            current_position = 1.0; // Go Long
         } else if (history[i].signal < EXIT_THRESHOLD) {
-            current_position = 0.0; 
+            current_position = 0.0; // Move to Cash
         }
     }
 
@@ -167,7 +171,7 @@ int main() {
 
         string signal_path = env_signal ? string(env_signal) : (base_dir / "data/processed/signals.csv").string();
         string price_path = env_prices ? string(env_prices) : (base_dir / "data/raw/universe_prices.csv").string();
-        string base_report_path = env_report ? string(env_report) : (base_dir / "REPORT.md").string();
+        string report_path = env_report ? string(env_report) : (base_dir / "REPORT.md").string();
 
         auto validate_path = [](const string& path, const string& label, const string& env_var) {
             if (path.empty()) {
@@ -180,7 +184,10 @@ int main() {
 
         validate_path(signal_path, "Signals CSV", "SIGNALS_CSV_PATH");
         validate_path(price_path, "Universe prices CSV", "UNIVERSE_PRICES_PATH");
-        
+        filesystem::path report_parent = filesystem::path(report_path).parent_path();
+        if (!report_parent.empty() && !filesystem::exists(report_parent)) {
+            filesystem::create_directories(report_parent);
+        }
         ifstream signal_file(signal_path);
         if (!signal_file.is_open()) {
             throw runtime_error("CRITICAL ERROR: Cannot open " + signal_path + ". Did the Python fusion step run?");
@@ -193,9 +200,9 @@ int main() {
         while (getline(signal_file, line)) {
             stringstream s(line);
             string date;
-            getline(s, date, ','); 
-            getline(s, word, ','); 
-            getline(s, word, ','); 
+            getline(s, date, ','); // date
+            getline(s, word, ','); // close (ignored)
+            getline(s, word, ','); // salary_zscore
             if (!date.empty() && !word.empty()) {
                 salary_zscores[date] = stod(word);
             }
@@ -209,7 +216,7 @@ int main() {
 
         map<string, vector<PricePoint>> price_history_by_symbol;
 
-        getline(price_file, line); 
+        getline(price_file, line); // header
         while (getline(price_file, line)) {
             stringstream s(line);
             string date, symbol, close_str;
@@ -273,6 +280,9 @@ int main() {
         double aggregate_peak = total_starting_equity;
         double aggregate_max_drawdown = 0.0;
 
+        // Aggregate assumes equal weighting by taking the mean return of all tickers that report data on each date.
+        // Dates where some tickers are missing simply average over the available names; this intentionally avoids
+        // forward-filling or overweighting tickers with longer histories but can introduce survivorship bias.
         for (const auto& kv : aggregate_returns) {
             double avg_return = accumulate(kv.second.begin(), kv.second.end(), 0.0) / kv.second.size();
             aggregate_equity *= (1.0 + avg_return);
@@ -305,6 +315,7 @@ int main() {
         double benchmark_equity = 0.0;
         size_t ticker_count = summaries.size();
         double capital_per_ticker = total_starting_equity / static_cast<double>(ticker_count);
+        // Equal-weight the buy-and-hold benchmark across the same tickers to mirror the strategy aggregation.
         for (const auto& row : summaries) {
             benchmark_equity += capital_per_ticker * (1.0 + row.benchmark_return / 100.0);
         }
@@ -324,22 +335,17 @@ int main() {
         // --- NEW: Timestamp Archiving Logic ---
         auto now = std::chrono::system_clock::now();
         std::time_t time = std::chrono::system_clock::to_time_t(now);
-        std::string report_path = base_report_path;
-        size_t dot_pos = report_path.find_last_of('.');
+        std::string final_report_path = report_path;
+        size_t dot_pos = final_report_path.find_last_of('.');
         if (dot_pos != std::string::npos) {
-            report_path.insert(dot_pos, "_" + std::to_string(time));
+            final_report_path.insert(dot_pos, "_" + std::to_string(time));
         } else {
-            report_path += "_" + std::to_string(time);
+            final_report_path += "_" + std::to_string(time);
         }
 
-        filesystem::path report_parent = filesystem::path(report_path).parent_path();
-        if (!report_parent.empty() && !filesystem::exists(report_parent)) {
-            filesystem::create_directories(report_parent);
-        }
+        write_report(summaries, max_history_length, total_starting_equity, aggregate_equity, final_report_path);
 
-        write_report(summaries, max_history_length, total_starting_equity, aggregate_equity, report_path);
-
-        cout << "SUCCESS: Backtest complete. Risk metrics safely archived to: " << report_path << endl;
+        cout << "SUCCESS: Backtest complete. Risk metrics saved to " << final_report_path << endl;
         return 0;
     } catch (const exception& ex) {
         cerr << ex.what() << endl;
